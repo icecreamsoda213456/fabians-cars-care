@@ -49,7 +49,7 @@ import './app-theme.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false';
-const PORTFOLIO_URL = import.meta.env.VITE_PORTFOLIO_URL || 'http://localhost:3000';
+const PORTFOLIO_URL = import.meta.env.VITE_PORTFOLIO_URL || 'https://cristian-portfolio-opal.vercel.app/#projects';
 const SALE_SYNC_KEY = 'fabians-sale-sync';
 
 const demoSession = {
