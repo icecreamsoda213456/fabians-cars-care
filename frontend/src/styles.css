@@ -261,6 +261,7 @@ button:disabled {
 }
 
 .nav-item,
+.portfolio-link,
 .logout-button {
   width: 100%;
   display: flex;
@@ -277,6 +278,7 @@ button:disabled {
 }
 
 .nav-item:hover,
+.portfolio-link:hover,
 .logout-button:hover,
 .nav-item.active {
   color: #fff;
@@ -284,6 +286,7 @@ button:disabled {
 }
 
 .nav-item:hover,
+.portfolio-link:hover,
 .logout-button:hover {
   transform: translateX(2px);
 }

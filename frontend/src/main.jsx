@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Banknote,
+  ArrowLeft,
   BarChart3,
   Barcode,
   Bell,
@@ -47,6 +48,7 @@ import './app-theme.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false';
+const PORTFOLIO_URL = import.meta.env.VITE_PORTFOLIO_URL || 'http://localhost:3000';
 const SALE_SYNC_KEY = 'fabians-sale-sync';
 
 const demoSession = {
@@ -889,6 +891,11 @@ function App() {
             );
           })}
         </nav>
+
+        <a className="portfolio-link" href={PORTFOLIO_URL}>
+          <ArrowLeft size={18} />
+          <span>Back to Portfolio</span>
+        </a>
 
         <button className="logout-button" onClick={logout}>
           <LogOut size={18} />
