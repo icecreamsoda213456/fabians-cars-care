@@ -20,6 +20,7 @@ import {
   History,
   ImagePlus,
   LockKeyhole,
+  MonitorPlay,
   Minus,
   Pencil,
   LayoutDashboard,
@@ -939,6 +940,19 @@ function App() {
             </div>
           </div>
         </header>
+
+        {DEMO_MODE && (
+          <div className="demo-banner" role="status">
+            <div className="demo-banner-mark">
+              <MonitorPlay size={17} />
+            </div>
+            <div>
+              <strong>Live demo mode</strong>
+              <span>You are browsing as a Guest Owner. Changes are temporary.</span>
+            </div>
+            <span className="demo-banner-badge">Sample data</span>
+          </div>
+        )}
 
         {session.user.role !== 'cashier' && activeView === 'Dashboard' && (
           <section className="metric-grid">
