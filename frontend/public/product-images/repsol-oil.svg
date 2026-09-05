@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" role="img" aria-label="Repsol oil">
+  <rect width="320" height="240" fill="#f8fafc"/>
+  <path d="M119 34h82l17 42v116c0 14-11 25-25 25h-66c-14 0-25-11-25-25V76z" fill="#f97316"/>
+  <path d="M129 54h62l9 24h-80z" fill="#111827"/>
+  <rect x="122" y="96" width="76" height="80" rx="12" fill="#ffffff"/>
+  <circle cx="160" cy="136" r="27" fill="#f97316"/>
+  <rect x="132" y="130" width="56" height="12" rx="6" fill="#111827"/>
+</svg>

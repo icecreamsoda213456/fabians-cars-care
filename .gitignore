@@ -1,0 +1,14 @@
+backend/.env
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+!frontend/.env.*.example
+**/node_modules/
+frontend/dist/
+out/
+backend/data/backups/
+backend/data/pre-import-backup/
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal
+*.log

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" role="img" aria-label="Petron oil">
+  <rect width="320" height="240" fill="#fff7ed"/>
+  <path d="M118 34h84l18 42v116c0 14-11 25-25 25h-70c-14 0-25-11-25-25V76z" fill="#ef4444"/>
+  <path d="M128 54h64l9 24h-82z" fill="#7f1d1d"/>
+  <rect x="122" y="99" width="76" height="76" rx="12" fill="#ffffff"/>
+  <path d="M144 124h32l12 22-28 18-28-18z" fill="#f59e0b"/>
+  <rect x="140" y="183" width="40" height="9" rx="4.5" fill="#fecaca"/>
+</svg>
