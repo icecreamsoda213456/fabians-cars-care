@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Banknote,
-  ArrowLeft,
+  ArrowUpRight,
   BarChart3,
   Barcode,
   Bell,
@@ -17,6 +17,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  ExternalLink,
   History,
   ImagePlus,
   LockKeyhole,
@@ -24,7 +25,6 @@ import {
   Minus,
   Pencil,
   LayoutDashboard,
-  LogOut,
   PackagePlus,
   Plus,
   Printer,
@@ -44,6 +44,8 @@ import {
   X,
 } from 'lucide-react';
 import AuthScreen from './components/AuthScreen.jsx';
+import WorkspaceNavigation from './components/WorkspaceNavigation.jsx';
+import { createDemoStore, DEMO_STORAGE_KEY } from './demo-store.js';
 import './styles.css';
 import './app-theme.css';
 
@@ -165,6 +167,23 @@ const defaultPosSettings = {
   updatedAt: null,
 };
 
+const demoStore = DEMO_MODE ? createDemoStore({
+  products: fallbackProducts,
+  settings: defaultPosSettings,
+  storage: {
+    getItem: key => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+  },
+}) : null;
+
+function demoRequest(method, path, body) {
+  const request = () => demoStore.request(method, path, body);
+  // Keep checkout and inventory writes ordered across receipt and workspace tabs.
+  return navigator.locks?.request
+    ? navigator.locks.request(DEMO_STORAGE_KEY, request)
+    : Promise.resolve().then(request);
+}
+
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard },
   { label: 'POS Scanner', icon: ShoppingCart },
@@ -195,6 +214,7 @@ function formatDateTime(value) {
 }
 
 async function apiGet(path, token) {
+  if (DEMO_MODE) return demoRequest('GET', path);
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -206,6 +226,7 @@ async function apiGet(path, token) {
 }
 
 async function apiPost(path, body, token) {
+  if (DEMO_MODE) return demoRequest('POST', path, body);
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: {
@@ -220,6 +241,7 @@ async function apiPost(path, body, token) {
 }
 
 async function apiPatch(path, body, token) {
+  if (DEMO_MODE) return demoRequest('PATCH', path, body);
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'PATCH',
     headers: {
@@ -234,6 +256,7 @@ async function apiPatch(path, body, token) {
 }
 
 async function apiDelete(path, token) {
+  if (DEMO_MODE) return demoRequest('DELETE', path);
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'DELETE',
     headers: {
@@ -280,7 +303,7 @@ function App() {
   const [session, setSession] = React.useState(savedSession);
   const [activeView, setActiveView] = React.useState(savedSession?.user.role === 'cashier' ? 'POS Scanner' : 'Dashboard');
   const [query, setQuery] = React.useState('');
-  const [notice, setNotice] = React.useState('Ready for barcode input');
+  const [notice, setNotice] = React.useState('');
   const [apiStatus, setApiStatus] = React.useState('Checking API');
   const [products, setProducts] = React.useState(fallbackProducts);
   const [deletedProducts, setDeletedProducts] = React.useState([]);
@@ -305,6 +328,11 @@ function App() {
 
   const visibleNavItems = navItems.filter((item) => canAccess(session?.user.role, item.label));
 
+  function navigateToView(view) {
+    setActiveView(view);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
   async function refreshOperationalData() {
     if (!session?.token) return;
 
@@ -322,11 +350,6 @@ function App() {
 
   React.useEffect(() => {
     if (!session?.token) return undefined;
-    if (DEMO_MODE) {
-      setApiStatus('Frontend demo mode - sample data');
-      return undefined;
-    }
-
     let alive = true;
 
     async function loadData() {
@@ -340,14 +363,15 @@ function App() {
         ]);
 
         if (!alive) return;
-        setApiStatus(`Connected - ${new Date(health.databaseTime).toLocaleTimeString()}`);
+        setApiStatus(DEMO_MODE ? 'Offline demo - data saved in this browser' : `Connected - ${new Date(health.databaseTime).toLocaleTimeString()}`);
         setDashboard(dashboardData);
         setProducts(productData);
         setSales(saleData);
         setReport(mergeReport(reportData));
-      } catch {
+      } catch (error) {
         if (!alive) return;
-        setApiStatus('Using demo data - start backend API on port 4000');
+        setApiStatus(DEMO_MODE ? 'Demo storage unavailable' : 'Using demo data - start backend API on port 4000');
+        if (DEMO_MODE) setNotice(error.message);
       }
     }
 
@@ -358,7 +382,7 @@ function App() {
   }, [session?.token]);
 
   React.useEffect(() => {
-    if (!session?.token || DEMO_MODE) return undefined;
+    if (!session?.token) return undefined;
 
     let alive = true;
     apiGet('/settings', session.token)
@@ -409,6 +433,15 @@ function App() {
     if (!session?.token) return undefined;
 
     function handleSaleSync(event) {
+      if (DEMO_MODE && event.key === DEMO_STORAGE_KEY) {
+        Promise.all([
+          refreshOperationalData(),
+          apiGet('/settings', session.token).then(setPosSettings),
+          apiGet('/products/deleted', session.token).then(setDeletedProducts),
+          activeReceipt ? apiGet(`/sales/${activeReceipt.id}`, session.token).then(setActiveReceipt).catch(() => setActiveReceipt(null)) : Promise.resolve(),
+        ]).catch(error => setNotice(`Unable to refresh demo data: ${error.message}`));
+        return;
+      }
       if (event.key !== SALE_SYNC_KEY || !event.newValue) return;
 
       try {
@@ -433,19 +466,13 @@ function App() {
   }, [session?.token, reportRange.from, reportRange.to, activeReceipt?.id]);
 
   React.useEffect(() => {
-    if (session?.user.role !== 'owner' || DEMO_MODE) return undefined;
+    if (session?.user.role !== 'owner') return undefined;
 
     let alive = true;
 
     async function loadDeletedProducts() {
       try {
-        const deletedProductData = await fetch(`${API_BASE}/products/deleted`, {
-          headers: { Authorization: `Bearer ${session.token}` },
-        }).then(async (response) => {
-          const data = await response.json().catch(() => []);
-          if (!response.ok) throw new Error(data.error || `API request failed: ${response.status}`);
-          return data;
-        });
+        const deletedProductData = await apiGet('/products/deleted', session.token);
 
         if (alive) setDeletedProducts(deletedProductData);
       } catch (error) {
@@ -460,13 +487,6 @@ function App() {
   }, [session?.token, session?.user.role]);
 
   async function loadReportRange(range, options = {}) {
-    if (DEMO_MODE) {
-      setReportRange(range);
-      setReport(mergeReport({ ...fallbackReport, range }));
-      if (!options.silent) setNotice(`Demo report updated from ${range.from} to ${range.to}`);
-      return;
-    }
-
     try {
       const reportData = await apiGet(`/reports/summary?from=${range.from}&to=${range.to}`);
       setReportRange(reportData.range || range);
@@ -598,6 +618,7 @@ function App() {
       }];
     }));
     setNotice(`${updatedProduct.name} updated`);
+    if (DEMO_MODE) await refreshOperationalData();
   }
 
   async function savePosSettings(nextSettings) {
@@ -618,6 +639,7 @@ function App() {
         : currentDashboard.lowStock,
     }));
     setNotice(`${createdProduct.name} added`);
+    if (DEMO_MODE) await refreshOperationalData();
   }
 
   async function deleteProduct(productId) {
@@ -629,11 +651,10 @@ function App() {
     );
 
     if (session.user.role === 'owner') {
-      const deletedProductData = await fetch(`${API_BASE}/products/deleted`, {
-        headers: { Authorization: `Bearer ${session.token}` },
-      }).then((result) => result.json());
+      const deletedProductData = await apiGet('/products/deleted', session.token);
       setDeletedProducts(deletedProductData);
     }
+    if (DEMO_MODE) await refreshOperationalData();
   }
 
   async function restoreProduct(productId) {
@@ -641,6 +662,7 @@ function App() {
     setProducts((currentProducts) => [...currentProducts, restoredProduct].sort((a, b) => a.name.localeCompare(b.name)));
     setDeletedProducts((currentProducts) => currentProducts.filter((product) => product.id !== productId));
     setNotice(`${restoredProduct.name} restored to products`);
+    if (DEMO_MODE) await refreshOperationalData();
   }
 
   async function purgeExpiredProducts() {
@@ -783,6 +805,7 @@ function App() {
       setActiveReceipt(receiptData);
       setActiveView('POS Scanner');
       setNotice('');
+      window.setTimeout(() => document.getElementById('printable-receipt')?.scrollIntoView({ block: 'start', behavior: 'auto' }), 0);
       return receiptData;
     } catch (error) {
       setNotice(`Unable to load receipt: ${error.message}`);
@@ -864,76 +887,38 @@ function App() {
     }
   }
 
+  async function resetDemo() {
+    if (!DEMO_MODE || !window.confirm('Reset sample sales, inventory, and settings in this browser? Real database records will not be affected.')) return;
+    try {
+      await apiPost('/demo/reset', {});
+      window.location.reload();
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">
-            <Car size={24} />
-          </div>
-          <div>
-            <strong>{posSettings.shopName}</strong>
-            <span>Point of Sale</span>
-          </div>
-        </div>
+      <WorkspaceNavigation items={visibleNavItems} activeView={activeView} onNavigate={navigateToView}
+        shopName={posSettings.shopName} onLogout={logout} demoMode={DEMO_MODE} portfolioUrl={PORTFOLIO_URL} />
 
-        <nav className="nav-list" aria-label="Main navigation">
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                className={activeView === item.label ? 'nav-item active' : 'nav-item'}
-                key={item.label}
-                onClick={() => setActiveView(item.label)}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <a className="portfolio-link" href={PORTFOLIO_URL}>
-          <ArrowLeft size={18} />
-          <span>Back to Portfolio</span>
-        </a>
-
-        <button className="logout-button" onClick={logout}>
-          <LogOut size={18} />
-          <span>Logout</span>
-        </button>
-      </aside>
-
-      <main className="workspace">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">Car Shop POS</span>
-            <h1>{activeView}</h1>
-          </div>
-          <div className="topbar-actions">
-            {activeView === 'Products' && (
-              <label className="search-box">
-                <Search size={18} />
-                <input
-                  placeholder="Search product, barcode, or category..."
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </label>
-            )}
+      <main className="workspace" id="main-workspace">
+        <header className="workspace-topbar">
+          <div className="workspace-breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{activeView === 'POS Scanner' ? 'Point of sale' : activeView === 'Owner Recycle Bin' ? 'Recycle bin' : activeView}</strong></div>
+          <div className="workspace-account">
             <button
-              className="icon-button notification-button"
+              className="icon-button"
               aria-label="View system status"
               title="System status"
               onClick={() => setNotice(apiStatus)}
             >
               <Bell size={20} />
             </button>
-            <div className="topbar-profile" title={`${session.user.name} - ${session.user.role}`}>
+            <div className="workspace-user" title={`${session.user.name} - ${session.user.role}`}>
               <div className="avatar" aria-hidden="true">
                 {session.user.name.slice(0, 2).toUpperCase()}
               </div>
-              <div className="topbar-profile-copy">
+              <div className="workspace-user-copy">
                 <strong>{session.user.name}</strong>
                 <span>{session.user.role}</span>
               </div>
@@ -942,35 +927,47 @@ function App() {
         </header>
 
         {DEMO_MODE && (
-          <div className="demo-banner" role="status">
-            <div className="demo-banner-mark">
-              <MonitorPlay size={17} />
-            </div>
-            <div>
-              <strong>Live demo mode</strong>
-              <span>You are browsing as a Guest Owner. Changes are temporary.</span>
-            </div>
-            <span className="demo-banner-badge">Sample data</span>
+          <div className="workspace-demo-strip" role="status">
+            <MonitorPlay size={16} /><strong>Demo workspace</strong>
+            <span>Sample data saved in this browser. No real payments.</span>
+            <button type="button" className="link-button demo-reset-button" onClick={resetDemo}><RotateCcw size={14} />Reset demo</button>
           </div>
+        )}
+
+        <div className="workspace-page-heading">
+          <div>
+            <h1>{activeView === 'Dashboard' ? 'Business overview' : activeView === 'POS Scanner' ? 'Point of sale' : activeView === 'Owner Recycle Bin' ? 'Recycle bin' : activeView}</h1>
+            <p>{({ Dashboard: 'Sales, stock, and the details that need your attention.', 'POS Scanner': 'Current order and checkout', Products: 'Your catalog, pricing, and stock levels.', Sales: 'Transaction history and receipts', Reports: 'Sales performance and inventory insights', Users: 'Your team and their access', Settings: 'Store details and workspace preferences', 'Owner Recycle Bin': 'Deleted products and recovery' })[activeView]}</p>
+          </div>
+          {activeView !== 'POS Scanner' && <button type="button" className="primary-button workspace-new-sale" onClick={() => navigateToView('POS Scanner')}><Plus size={18} />New sale</button>}
+        </div>
+
+        {activeView === 'Products' && (
+          <label className="workspace-product-search"><Search size={18} />
+            <input aria-label="Search inventory" placeholder="Search products, barcodes, or categories" value={query} onChange={event => setQuery(event.target.value)} />
+            {query && <button className="icon-button" type="button" aria-label="Clear inventory search" title="Clear search" onClick={() => setQuery('')}><X size={16} /></button>}
+          </label>
         )}
 
         {session.user.role !== 'cashier' && activeView === 'Dashboard' && (
           <section className="metric-grid">
-            <MetricCard title="Today's Sales" value={formatPeso(dashboard.todaySales)} trend={apiStatus} icon={Receipt} tone="green" />
-            <MetricCard title="Products In Stock" value={dashboard.products} trend={`${filteredProducts.length} visible`} icon={Boxes} tone="blue" />
-            <MetricCard title="Low Stock Items" value={dashboard.lowStock} trend="Tracked by reorder level" icon={ClipboardList} tone="amber" />
-            <MetricCard title="Active Users" value={dashboard.activeUsers} trend="Role-based access ready" icon={Users} tone="slate" />
+            <MetricCard title="Today's sales" value={formatPeso(dashboard.todaySales)} trend={DEMO_MODE ? 'Sample transactions today' : 'Recorded today'} icon={Receipt} tone="green" />
+            <MetricCard title="Catalog products" value={dashboard.products} trend={`${products.reduce((sum, product) => sum + Number(product.stock), 0)} units on hand`} icon={Boxes} tone="blue" />
+            <MetricCard title="Low stock" value={dashboard.lowStock} trend={dashboard.lowStock ? 'Replenishment needed' : 'Stock levels are healthy'} icon={ClipboardList} tone="amber" />
+            <MetricCard title="Active users" value={dashboard.activeUsers} trend="Store team members" icon={Users} tone="slate" />
           </section>
         )}
 
-        {notice && <div className="notice-banner">{notice}</div>}
+        {notice && <div className="notice-banner workspace-notice" role="status"><CircleAlert size={18} /><span>{notice}</span><button type="button" className="icon-button" aria-label="Dismiss notification" title="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}
 
         <section className="content-grid">
           {activeView === 'Dashboard' && (
             <DashboardPanel
               products={products}
               sales={sales}
-              onNavigate={setActiveView}
+              report={report}
+              defaultReorderLevel={posSettings.defaultReorderLevel}
+              onNavigate={navigateToView}
             />
           )}
 
@@ -1082,22 +1079,63 @@ function MetricCard({ title, value, trend, icon: Icon, tone }) {
   );
 }
 
-function DashboardPanel({ products, sales, onNavigate }) {
+function DashboardPanel({ products, sales, report, defaultReorderLevel, onNavigate }) {
   const inventoryWatch = [...products]
     .sort((first, second) => first.stock - second.stock)
     .slice(0, 5);
   const recentSales = sales.slice(0, 5);
+  const dailySales = report.dailySales || [];
+  const chartMaximum = Math.max(1, ...dailySales.map(day => Number(day.revenue) || 0));
+  const periodRevenue = dailySales.reduce((sum, day) => sum + Number(day.revenue || 0), 0);
+  const outOfStock = products.filter(product => Number(product.stock) <= 0).length;
+  const lowStock = products.filter(product => Number(product.stock) > 0 && Number(product.stock) <= Number(product.reorderLevel ?? defaultReorderLevel)).length;
+  const healthyStock = products.length - outOfStock - lowStock;
+  const stockGroups = [
+    { label: 'Healthy stock', count: healthyStock, tone: 'healthy' },
+    { label: 'Running low', count: lowStock, tone: 'low' },
+    { label: 'Out of stock', count: outOfStock, tone: 'out' },
+  ];
 
   return (
     <div className="dashboard-overview full-span">
-      <section className="panel dashboard-summary-panel">
+      <section className="overview-section dashboard-sales-chart" aria-labelledby="daily-sales-title">
+        <div className="overview-section-heading">
+          <div><h2 id="daily-sales-title">Sales by day</h2><span>{`${report.range?.from || ''} to ${report.range?.to || ''}`}</span></div>
+          <button className="link-button" onClick={() => onNavigate('Reports')}>Reports<ArrowUpRight size={16} /></button>
+        </div>
+        <div className="overview-revenue"><strong>{formatPeso(periodRevenue)}</strong><span>Period total</span></div>
+        {dailySales.length ? (
+          <div className="daily-sales-plot" role="list" aria-label="Daily sales amounts">
+            {dailySales.map((day, index) => (
+              <div className="daily-sales-column" role="listitem" key={`${day.label}-${index}`} title={`${day.label}: ${formatPeso(day.revenue)}`}>
+                <div className="daily-sales-track"><div className={`daily-sales-bar${Number(day.revenue) === chartMaximum ? ' is-highest' : ''}`} style={{ height: `${Math.max(0, Number(day.revenue) || 0) / chartMaximum * 100}%` }} /></div>
+                <strong>{formatPeso(day.revenue)}</strong><span>{day.label}</span>
+              </div>
+            ))}
+          </div>
+        ) : <div className="empty-state">No sales in this period</div>}
+      </section>
+
+      <section className="overview-section dashboard-stock-summary" aria-labelledby="stock-health-title">
+        <div className="overview-section-heading"><div><h2 id="stock-health-title">Inventory health</h2><span>Current catalog status</span></div><Boxes size={20} /></div>
+        <div className="inventory-health-total"><strong>{products.length}</strong><span>products tracked</span></div>
+        <div className="inventory-health-bar" aria-hidden="true">
+          {stockGroups.map(group => <span key={group.tone} className={group.tone} style={{ flexGrow: group.count }} />)}
+        </div>
+        <dl className="inventory-health-legend">
+          {stockGroups.map(group => <div key={group.tone}><dt><i className={group.tone} />{group.label}</dt><dd>{group.count}</dd></div>)}
+        </dl>
+        <button className="inventory-review-button" onClick={() => onNavigate('Products')}><ClipboardList size={17} />Review inventory<ArrowUpRight size={17} /></button>
+      </section>
+
+      <section className="overview-section dashboard-summary-panel dashboard-stock-list">
         <div className="panel-header">
           <div>
-            <span className="eyebrow">Inventory Status</span>
-            <h2>Stock Attention</h2>
+            <h2>Stock watch</h2>
+            <span className="overview-section-caption">Lowest stock first</span>
           </div>
           <button className="link-button" onClick={() => onNavigate('Products')}>
-            View products
+            All products
             <ChevronRight size={18} />
           </button>
         </div>
@@ -1111,7 +1149,7 @@ function DashboardPanel({ products, sales, onNavigate }) {
               </div>
               <div className="dashboard-row-value">
                 <b>{product.stock}</b>
-                <span>{product.status}</span>
+                <span className={Number(product.stock) <= Number(product.reorderLevel ?? defaultReorderLevel) ? 'stock-needs-attention' : ''}>{product.status}</span>
               </div>
             </div>
           ))}
@@ -1119,14 +1157,14 @@ function DashboardPanel({ products, sales, onNavigate }) {
         </div>
       </section>
 
-      <section className="panel dashboard-summary-panel">
+      <section className="overview-section dashboard-summary-panel dashboard-sales-list">
         <div className="panel-header">
           <div>
-            <span className="eyebrow">Sales Activity</span>
-            <h2>Recent Transactions</h2>
+            <h2>Recent transactions</h2>
+            <span className="overview-section-caption">Latest recorded activity</span>
           </div>
           <button className="link-button" onClick={() => onNavigate('Sales')}>
-            View sales
+            All sales
             <ChevronRight size={18} />
           </button>
         </div>
@@ -1142,7 +1180,7 @@ function DashboardPanel({ products, sales, onNavigate }) {
               </div>
               <div className="dashboard-row-value">
                 <b>{formatPeso(sale.total_amount)}</b>
-                <span>{sale.status}</span>
+                <span className={`transaction-state ${sale.status}`}>{sale.status}</span>
               </div>
             </div>
           ))}
@@ -1723,6 +1761,7 @@ function ReceiptCard({
           <strong>{receipt.receiptNo}</strong>
         </div>
         <div className="receipt-toolbar-actions">
+          {DEMO_MODE && <a className="ghost-button receipt-open-button" href={`?receipt=${receipt.id}`} target="_blank" rel="noopener noreferrer" title="Open receipt in new tab" aria-label="Open receipt in new tab"><ExternalLink size={17} /></a>}
           {canVoidSale && (
             <button className="receipt-void-button" type="button" onClick={() => setIsVoidDialogOpen(true)}>
               <CircleAlert size={17} />
@@ -1754,8 +1793,9 @@ function ReceiptCard({
               .join(' | ')}
           </span>
         )}
-        <b>OFFICIAL SALES RECEIPT</b>
+        <b>{DEMO_MODE || receipt.isDemo ? 'SAMPLE SALES RECEIPT' : 'OFFICIAL SALES RECEIPT'}</b>
       </div>
+      {(DEMO_MODE || receipt.isDemo) && <div className="receipt-demo-notice">DEMO ONLY - NOT VALID FOR PAYMENT</div>}
       <div className="receipt-reference">
         <div>
           <span>Receipt No.</span>
@@ -1854,7 +1894,7 @@ function ReceiptCard({
               />
               <span>{voidReason.length}/300</span>
             </label>
-            {!isCashPayment && (
+            {!isCashPayment && !DEMO_MODE && (
               <div className="void-payment-warning">
                 This restores inventory and voids the receipt. Process the {paymentMethod} payment reversal separately.
               </div>
@@ -1882,7 +1922,7 @@ function StandaloneReceiptPage({ saleId }) {
   const [error, setError] = React.useState('');
   const hasAutoPrinted = React.useRef(false);
   const isPreparing = saleId === 'preparing';
-  const savedSession = readSavedSession();
+  const savedSession = DEMO_MODE ? demoSession : readSavedSession();
 
   React.useEffect(() => {
     if (isPreparing) {
@@ -1933,12 +1973,18 @@ function StandaloneReceiptPage({ saleId }) {
     if (isPreparing) return undefined;
 
     function handleSaleSync(event) {
+      if (DEMO_MODE && event.key === DEMO_STORAGE_KEY) {
+        Promise.all([apiGet(`/sales/${Number(saleId)}`), apiGet('/settings')])
+          .then(([receiptData, settingsData]) => { setReceipt(receiptData); setSettings(settingsData); setError(''); })
+          .catch(receiptError => setError(receiptError.message));
+        return;
+      }
       if (event.key !== SALE_SYNC_KEY || !event.newValue) return;
 
       try {
         const update = JSON.parse(event.newValue);
         if (Number(update.saleId) !== Number(saleId)) return;
-        const currentSession = readSavedSession();
+        const currentSession = DEMO_MODE ? demoSession : readSavedSession();
         if (!currentSession?.token) return;
         apiGet(`/sales/${Number(saleId)}`, currentSession.token)
           .then(setReceipt)
@@ -1953,7 +1999,7 @@ function StandaloneReceiptPage({ saleId }) {
   }, [isPreparing, saleId]);
 
   async function voidStandaloneSale(receiptId, reason) {
-    const currentSession = readSavedSession();
+    const currentSession = DEMO_MODE ? demoSession : readSavedSession();
     if (!currentSession?.token) throw new Error('Your session has expired. Sign in again from the POS.');
 
     const voidedReceipt = await apiPost(`/sales/${receiptId}/void`, { reason }, currentSession.token);
@@ -2264,7 +2310,7 @@ function ProductsPanel({
         </form>
       )}
       <div className="table-wrap">
-        <table>
+        <table role="table" aria-label="Product inventory">
           <thead>
             <tr>
               <th>Product</th>
@@ -2287,21 +2333,22 @@ function ProductsPanel({
                     </div>
                   </div>
                 </td>
-                <td>{product.category}</td>
-                <td>{product.stock}</td>
-                <td>{formatPeso(product.salePrice)}</td>
-                <td>
+                <td data-label="Category">{product.category}</td>
+                <td data-label="Stock">{product.stock}</td>
+                <td data-label="Price">{formatPeso(product.salePrice)}</td>
+                <td data-label="Status">
                   <span className={product.status === 'Low stock' ? 'pill warning' : 'pill success'}>{product.status}</span>
                 </td>
                 {canManageProducts && (
-                  <td>
+                  <td className="product-actions-cell">
                     <div className="table-actions">
-                      <button className="icon-action" aria-label={`Edit ${product.name}`} onClick={() => startEdit(product)}>
+                      <button className="icon-action" aria-label={`Edit ${product.name}`} title={`Edit ${product.name}`} onClick={() => startEdit(product)}>
                         <Pencil size={16} />
                       </button>
                       <button
                         className="icon-action danger"
                         aria-label={`Delete ${product.name}`}
+                        title={`Delete ${product.name}`}
                         disabled={busyId === product.id}
                         onClick={() => softDeleteProduct(product)}
                       >
@@ -2504,7 +2551,7 @@ function ReportsPanel({ report, reportRange, onApplyRange }) {
         <div>
           <span className="eyebrow">Sales & Inventory Tracker</span>
           <h2>Performance overview</h2>
-          <p>Monitor revenue, sales activity, best sellers, and restock priorities in one place.</p>
+          <p>{DEMO_MODE ? 'Sample sales and inventory figures' : 'Sales and inventory for the selected period'}</p>
         </div>
         <form className="report-date-filter" onSubmit={applyDateRange}>
           <label>
@@ -2543,14 +2590,14 @@ function ReportsPanel({ report, reportRange, onApplyRange }) {
           <div className="panel-header">
             <div>
               <span className="eyebrow">Revenue Trend</span>
-              <h2>Daily Sales Bar Chart</h2>
+              <h2>Daily revenue</h2>
             </div>
           </div>
           <div className="bar-chart">
             {report.dailySales.map((day) => (
               <div className="bar-column" key={day.label}>
                 <div className="bar-track">
-                  <div className="bar-fill" style={{ height: `${Math.max((day.revenue / maxDailyRevenue) * 100, 4)}%` }} />
+                  <div className="bar-fill" style={{ height: `${Math.max((day.revenue / maxDailyRevenue) * 100, 0)}%` }} />
                 </div>
                 <strong>{formatPeso(day.revenue)}</strong>
                 <span>{day.label}</span>
@@ -2562,8 +2609,8 @@ function ReportsPanel({ report, reportRange, onApplyRange }) {
         <div className="panel chart-panel large-chart">
           <div className="panel-header">
             <div>
-              <span className="eyebrow">Monthly Sales</span>
-              <h2>Sales Line Graph</h2>
+              <span className="eyebrow">{DEMO_MODE ? 'Last 6 months' : 'Monthly Sales'}</span>
+              <h2>Monthly revenue</h2>
             </div>
           </div>
           <LineChart data={report.monthlySales} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
@@ -2643,7 +2690,7 @@ function ReportsPanel({ report, reportRange, onApplyRange }) {
           <div className="panel-header">
             <div>
               <span className="eyebrow">Sales Mix</span>
-              <h2>Category Pie Chart</h2>
+              <h2>Sales by category</h2>
             </div>
           </div>
           <div className="pie-layout">
@@ -2731,7 +2778,7 @@ function ReportsPanel({ report, reportRange, onApplyRange }) {
                   <tr key={sale.receiptNo}>
                     <td>
                       <strong>{sale.receiptNo}</strong>
-                      <span>{new Date(sale.saleDate).toLocaleString()}</span>
+                      <span>{formatDateTime(sale.saleDate)}</span>
                     </td>
                     <td>{sale.paymentMethod}</td>
                     <td><span className="pill success">{sale.status}</span></td>
@@ -3427,8 +3474,8 @@ function SettingsPanel({ apiStatus, settings, onSave }) {
         <div className="settings-database-state">
           <span className="settings-status-dot" />
           <div>
-            <strong>PostgreSQL</strong>
-            <span>{apiStatus.startsWith('Connected') ? 'Connected' : 'Check connection'}</span>
+            <strong>{DEMO_MODE ? 'Browser storage' : 'PostgreSQL'}</strong>
+            <span>{DEMO_MODE ? 'Offline demo' : apiStatus.startsWith('Connected') ? 'Connected' : 'Check connection'}</span>
           </div>
         </div>
       </aside>
@@ -3839,7 +3886,7 @@ function SettingsPanel({ apiStatus, settings, onSave }) {
                 <div>
                   <Database size={19} />
                   <span>Settings Storage</span>
-                  <strong>SQLite / local device</strong>
+                  <strong>{DEMO_MODE ? 'Browser storage / demo only' : 'SQLite / local device'}</strong>
                 </div>
                 <div>
                   <ShieldCheck size={19} />
